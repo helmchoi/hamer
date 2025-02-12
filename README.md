@@ -8,6 +8,11 @@ Code repository for the paper:
 
 ![teaser](assets/teaser.jpg)
 
+## Custom dataset (HL) running
+```
+python demo_HL.py --img_folder data/<INPUT_NAME> --out_folder data/output  --batch_size=1 --side_view
+```
+
 ## News
 
 - [2024/06] HaMeR received the 2nd place award in the Ego-Pose Hands task of the Ego-Exo4D Challenge! Please check the [validation report](https://www.cs.utexas.edu/~pavlakos/hamer/resources/egoexo4d_challenge.pdf).
