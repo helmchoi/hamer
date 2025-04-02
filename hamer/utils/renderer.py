@@ -6,6 +6,7 @@ import numpy as np
 import pyrender
 import trimesh
 import cv2
+from scipy.spatial.transform import Rotation as sr
 from yacs.config import CfgNode
 from typing import List, Optional
 
@@ -342,6 +343,7 @@ class Renderer:
             render_res=[256, 256],
             focal_length=None,
             is_right=None,
+            side_view=False
         ):
 
         renderer = pyrender.OffscreenRenderer(viewport_width=render_res[0],
@@ -355,7 +357,11 @@ class Renderer:
         if is_right is None:
             is_right = [1 for _ in range(len(vertices))]
 
-        mesh_list = [pyrender.Mesh.from_trimesh(self.vertices_to_trimesh(vvv, ttt.copy(), mesh_base_color, rot_axis, rot_angle, is_right=sss)) for vvv,ttt,sss in zip(vertices, cam_t, is_right)]
+        if side_view:
+            rot_view = sr.from_euler('xyz', [0, -90, 0], degrees=True).as_matrix()
+        else:
+            rot_view = np.eye(3)
+        mesh_list = [pyrender.Mesh.from_trimesh(self.vertices_to_trimesh(vvv @ rot_view.T, ttt.copy(), mesh_base_color, rot_axis, rot_angle, is_right=sss)) for vvv,ttt,sss in zip(vertices, cam_t, is_right)]
 
         scene = pyrender.Scene(bg_color=[*scene_bg_color, 0.0],
                                ambient_light=(0.3, 0.3, 0.3))

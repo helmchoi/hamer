@@ -45,8 +45,27 @@ def main():
     model = model.to(device)
     model.eval()
 
-    # # keypoint detector
-    # cpm = ViTPoseModel(device)
+    # Load detector
+    from hamer.utils.utils_detectron2 import DefaultPredictor_Lazy
+    if args.body_detector == 'vitdet':
+        from detectron2.config import LazyConfig
+        import hamer
+        cfg_path = Path(hamer.__file__).parent/'configs'/'cascade_mask_rcnn_vitdet_h_75ep.py'
+        detectron2_cfg = LazyConfig.load(str(cfg_path))
+        detectron2_cfg.train.init_checkpoint = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl"
+        for i in range(3):
+            detectron2_cfg.model.roi_heads.box_predictors[i].test_score_thresh = 0.25
+        detector = DefaultPredictor_Lazy(detectron2_cfg)
+    elif args.body_detector == 'regnety':
+        from detectron2 import model_zoo
+        from detectron2.config import get_cfg
+        detectron2_cfg = model_zoo.get_config('new_baselines/mask_rcnn_regnety_4gf_dds_FPN_400ep_LSJ.py', trained=True)
+        detectron2_cfg.model.roi_heads.box_predictor.test_score_thresh = 0.5
+        detectron2_cfg.model.roi_heads.box_predictor.test_nms_thresh   = 0.4
+        detector       = DefaultPredictor_Lazy(detectron2_cfg)
+
+    # keypoint detector
+    cpm = ViTPoseModel(device)
 
     # Setup the renderer
     renderer = Renderer(model_cfg, faces=model.mano.faces)
@@ -64,50 +83,61 @@ def main():
     joints3d_stack = []
     joints2d_stack = []
     for idx_i, img_path in enumerate(img_paths):
+        # Get filename from path img_path
+        img_fn, _ = os.path.splitext(os.path.basename(img_path))
+
         img_cv2 = cv2.imread(str(img_path))
 
-        # # Detect humans in image
-        # img = img_cv2.copy()[:, :, ::-1]
+        # ----------------------------------------------------------
+        # Detect humans in image
+        t0 = time.time()
 
-        # # Detect human keypoints for each person
-        # t0 = time.time()
-        # vitposes_out = cpm.predict_pose(
-        #     img,
-        #     [np.concatenate([np.array([[390.0, 50.0, 500.0, 620.0]]), np.array([[0.99]])], axis=1)],
-        # )
-        # t1 = time.time()
-        # fps_mean += 1.0 / (t1 - t0)
-        # print("==> Inference time: ", t1-t0, ", fps = ", 1.0/(t1-t0))
+        det_out = detector(img_cv2)
+        img = img_cv2.copy()[:, :, ::-1]
 
-        # bboxes = []
-        # is_right = []
+        det_instances = det_out['instances']
+        valid_idx = (det_instances.pred_classes==0) & (det_instances.scores > 0.5)
+        pred_bboxes=det_instances.pred_boxes.tensor[valid_idx].cpu().numpy()
+        pred_scores=det_instances.scores[valid_idx].cpu().numpy()
 
-        # # Use hands based on hand keypoint detections
-        # for vitposes in vitposes_out:
-        #     # left_hand_keyp = vitposes['keypoints'][-42:-21]
-        #     right_hand_keyp = vitposes['keypoints'][-21:]
+        # Detect human keypoints for each person
+        vitposes_out = cpm.predict_pose(
+            img,
+            [np.concatenate([pred_bboxes, pred_scores[:, None]], axis=1)],
+        )
 
-        #     # Rejecting not confident detections
-        #     # keyp = left_hand_keyp
-        #     # valid = keyp[:,2] > 0.5
-        #     # if sum(valid) > 3:
-        #     #     bbox = [keyp[valid,0].min(), keyp[valid,1].min(), keyp[valid,0].max(), keyp[valid,1].max()]
-        #     #     bboxes.append(bbox)
-        #     #     is_right.append(0)
-        #     keyp = right_hand_keyp
-        #     valid = keyp[:,2] > 0.5
-        #     if sum(valid) > 3:
-        #         bbox = [keyp[valid,0].min(), keyp[valid,1].min(), keyp[valid,0].max(), keyp[valid,1].max()]
-        #         bboxes.append(bbox)
-        #         is_right.append(1)
+        bboxes = []
+        is_right = []
 
-        # if len(bboxes) == 0:
-        #     continue
+        # Use hands based on hand keypoint detections
+        for vitposes in vitposes_out:
+            # left_hand_keyp = vitposes['keypoints'][-42:-21]
+            right_hand_keyp = vitposes['keypoints'][-21:]
 
-        # boxes = np.stack(bboxes)
-        # right = np.stack(is_right)
-        boxes = np.array([[300.0, 80.0, 960.0, 720.0]]) # (u0, v0, u1, v1)
-        right = np.array([1])
+            # Rejecting not confident detections
+            # - LEFT HAND
+            # keyp = left_hand_keyp
+            # valid = keyp[:,2] > 0.5
+            # if sum(valid) > 3:
+            #     bbox = [keyp[valid,0].min(), keyp[valid,1].min(), keyp[valid,0].max(), keyp[valid,1].max()]
+            #     bboxes.append(bbox)
+            #     is_right.append(0)
+            # - RIGHT HAND
+            keyp = right_hand_keyp
+            valid = keyp[:,2] > 0.5
+            if sum(valid) > 3:
+                bbox = [keyp[valid,0].min(), keyp[valid,1].min(), keyp[valid,0].max(), keyp[valid,1].max()]
+                bboxes.append(bbox)
+                is_right.append(1)
+
+        if len(bboxes) == 0:
+            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_mesh.jpg'), 255*np.ones_like(img_cv2))  # no overlay
+            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_mesh_side.jpg'), 255*np.ones_like(img_cv2))
+            continue
+
+        boxes = np.stack(bboxes)
+        right = np.stack(is_right)
+        # ----------------------------------------------------------
 
         # Run reconstruction on all detected hands
         dataset = ViTDetDataset(model_cfg, img_cv2, boxes, right, rescale_factor=args.rescale_factor)
@@ -120,13 +150,6 @@ def main():
         for idx_b, batch in enumerate(dataloader):
             batch = recursive_to(batch, device)
 
-            # Warm-up @ first batch
-            if idx_b == 0:
-                with torch.no_grad():
-                    for _ in range(5):
-                        _ = model(batch)
-
-            t0 = time.time()
             with torch.no_grad():
                 out = model(batch)
             t1 = time.time()
@@ -162,8 +185,6 @@ def main():
             # Render the result
             batch_size = batch['img'].shape[0]
             for n in range(batch_size):
-                # Get filename from path img_path
-                img_fn, _ = os.path.splitext(os.path.basename(img_path))
                 person_id = int(batch['personid'][n])
                 white_img = (torch.ones_like(batch['img'][n]).cpu() - DEFAULT_MEAN[:,None,None]/255) / (DEFAULT_STD[:,None,None]/255)
                 input_patch = batch['img'][n].cpu() * (DEFAULT_STD[:,None,None]/255) + (DEFAULT_MEAN[:,None,None]/255)
