@@ -125,7 +125,8 @@ def main():
             # - RIGHT HAND
             keyp = right_hand_keyp
             valid = keyp[:,2] > 0.5
-            if sum(valid) > 3:
+            # ONLY take the first estimation!
+            if sum(valid) > 3 and len(bboxes) == 0:
                 bbox = [keyp[valid,0].min(), keyp[valid,1].min(), keyp[valid,0].max(), keyp[valid,1].max()]
                 bboxes.append(bbox)
                 is_right.append(1)
