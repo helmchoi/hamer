@@ -126,12 +126,15 @@ def main():
             keyp = right_hand_keyp
             valid = keyp[:,2] > 0.5
             # ONLY take the first estimation!
-            if sum(valid) > 3 and len(bboxes) == 0:
+            if sum(valid) > 3:
                 bbox = [keyp[valid,0].min(), keyp[valid,1].min(), keyp[valid,0].max(), keyp[valid,1].max()]
+                bboxes = []
                 bboxes.append(bbox)
                 is_right.append(1)
 
         if len(bboxes) == 0:
+            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_0.png'), 255*np.ones_like(img_cv2))
+            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*np.ones_like(img_cv2))
             cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_mesh.jpg'), 255*np.ones_like(img_cv2))  # no overlay
             cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_mesh_side.jpg'), 255*np.ones_like(img_cv2))
             continue
